@@ -1,145 +1,184 @@
 // ==UserScript==
 // @name         Gmail To/From Field Search
-// @namespace    https://github.com/samlroberts/userscripts
-// @version      1.3
+// @namespace    http://tampermonkey.net/
+// @version      2.0
 // @description  Make "to" and "from" email addresses clickable for Gmail search
 // @author       You
 // @match        https://mail.google.com/*
-// @updateURL    https://raw.githubusercontent.com/samlroberts/userscripts/main/Gmail%20To-From%20Field%20Search.user.js
-// @downloadURL  https://raw.githubusercontent.com/samlroberts/userscripts/main/Gmail%20To-From%20Field%20Search.user.js
 // @grant        none
 // ==/UserScript==
 
 ;(function () {
   "use strict"
 
-  // Function to create search URL for "to" field
-  function createToSearchUrl(email) {
-    const encodedEmail = encodeURIComponent(email)
-    return `https://mail.google.com/mail/u/0/#search/to%3A${encodedEmail}`
+  /**
+   * Create a Gmail search URL.
+   */
+  function createSearchUrl(type, email) {
+    return (
+      `https://mail.google.com/mail/u/0/#search/` +
+      `${type}%3A${encodeURIComponent(email)}`
+    )
   }
 
-  // Function to create search URL for "from" field
-  function createFromSearchUrl(email) {
-    const encodedEmail = encodeURIComponent(email)
-    return `https://mail.google.com/mail/u/0/#search/from%3A${encodedEmail}`
-  }
+  /**
+   * Convert one span[email] element.
+   *
+   * This function is intentionally limited to ONE element rather
+   * than repeatedly searching the entire Gmail document.
+   */
+  function convertEmailSpan(span) {
+    // Ignore elements we've already processed.
+    if (!(span instanceof Element)) return
+    if (!span.matches("span[email]")) return
+    if (span.dataset.searchConverted === "true") return
 
-  // Function to make email addresses clickable
-  function makeEmailsClickable() {
-    // Find all span elements with email attribute (both "to" and "from" fields)
-    const emailSpans = document.querySelectorAll("span[email]")
+    const email = span.getAttribute("email")
 
-    emailSpans.forEach((span) => {
-      const email = span.getAttribute("email")
-      if (email && !span.hasAttribute("data-converted")) {
-        // Check if already converted
-        // Mark as converted to prevent re-processing
-        span.setAttribute("data-converted", "true")
+    if (!email) return
 
-        // Determine if this is a "to" or "from" field based on parent structure
-        let searchUrl
-        const isFromField =
-          span.closest("span.qu") ||
-          span.classList.contains("gD") ||
-          span.classList.contains("yP") ||
-          span.closest("div.yW")
+    // Mark it immediately so mutations caused by our own changes
+    // don't cause it to be processed again.
+    span.dataset.searchConverted = "true"
 
-        if (isFromField) {
-          searchUrl = createFromSearchUrl(email)
-        } else {
-          searchUrl = createToSearchUrl(email)
-        }
+    /**
+     * Gmail uses a handful of different DOM structures depending
+     * on whether we're looking at a message list, expanded header,
+     * sender details, etc.
+     */
+    const isFromField =
+      !!span.closest("span.qu") ||
+      span.classList.contains("gD") ||
+      span.classList.contains("yP") ||
+      !!span.closest("div.yW")
 
-        // Handle "from" fields (span.qu structure)
-        if (isFromField) {
-          const emailTextSpan = span
-            .closest("span.qu")
-            ?.querySelector("span.go")
+    const type = isFromField ? "from" : "to"
+    const searchUrl = createSearchUrl(type, email)
 
-          if (emailTextSpan && !emailTextSpan.hasAttribute("data-converted")) {
-            // Mark the email text span as converted
-            emailTextSpan.setAttribute("data-converted", "true")
+    /**
+     * Expanded message headers have something roughly like:
+     *
+     * span.qu
+     *   span[email]
+     *   span.go    <-- displayed email text
+     *
+     * The visible text isn't necessarily the element carrying
+     * the `email` attribute.
+     */
+    if (isFromField) {
+      const emailTextSpan = span
+        .closest("span.qu")
+        ?.querySelector("span.go")
 
-            // Create a link element for the email text
-            const link = document.createElement("a")
-            link.href = searchUrl
-            link.textContent = emailTextSpan.textContent
-            link.style.color = "#1a73e8" // Gmail blue color
-            link.style.textDecoration = "underline"
-            link.style.cursor = "pointer"
+      if (
+        emailTextSpan &&
+        emailTextSpan.dataset.searchConverted !== "true"
+      ) {
+        emailTextSpan.dataset.searchConverted = "true"
 
-            // Add hover effect
-            link.addEventListener("mouseenter", function () {
-              this.style.color = "#1557b0"
-            })
-            link.addEventListener("mouseleave", function () {
-              this.style.color = "#1a73e8"
-            })
-
-            // Clear the email text span and append the link
-            while (emailTextSpan.firstChild) {
-              emailTextSpan.removeChild(emailTextSpan.firstChild)
-            }
-            emailTextSpan.appendChild(link)
-          }
-        } else {
-          // Handle "to" fields (direct span structure)
-          // Check if span doesn't have a link child yet
-          if (!span.querySelector("a")) {
-            // Create a link element for the span itself
-            const link = document.createElement("a")
-            link.href = searchUrl
-            link.textContent = span.textContent
-            link.style.color = "#1a73e8" // Gmail blue color
-            link.style.textDecoration = "underline"
-            link.style.cursor = "pointer"
-
-            // Add hover effect
-            link.addEventListener("mouseenter", function () {
-              this.style.color = "#1557b0"
-            })
-            link.addEventListener("mouseleave", function () {
-              this.style.color = "#1a73e8"
-            })
-
-            // Clear the span and append the link
-            while (span.firstChild) {
-              span.removeChild(span.firstChild)
-            }
-            span.appendChild(link)
-          }
-        }
+        makeLink(emailTextSpan, searchUrl)
       }
-    })
+
+      return
+    }
+
+    // Direct "to" address.
+    makeLink(span, searchUrl)
   }
 
-  // Run the function when the page loads
-  makeEmailsClickable()
+  /**
+   * Replace the visible contents of an element with a search link.
+   */
+  function makeLink(container, href) {
+    // Don't wrap an existing link.
+    if (container.querySelector(":scope > a")) return
 
-  // Also run when new content is loaded (for dynamic Gmail updates)
-  const observer = new MutationObserver(function (mutations) {
-    let shouldUpdate = false
-    mutations.forEach(function (mutation) {
-      if (mutation.type === "childList" && mutation.addedNodes.length > 0) {
-        // Check if any added nodes contain email spans
-        mutation.addedNodes.forEach(function (node) {
-          if (node.nodeType === 1) {
-            // Element node
-            if (node.querySelector && node.querySelector("span[email]")) {
-              shouldUpdate = true
-            }
-          }
-        })
+    const text = container.textContent
+
+    const link = document.createElement("a")
+
+    link.href = href
+    link.textContent = text
+
+    // Use a class instead of attaching mouseenter/mouseleave
+    // listeners to every single email address.
+    link.className = "gmail-email-search-link"
+
+    // replaceChildren() causes fewer DOM operations than repeatedly
+    // removing firstChild.
+    container.replaceChildren(link)
+  }
+
+  /**
+   * Find email spans ONLY inside a newly-added piece of DOM.
+   */
+  function processNode(node) {
+    if (!(node instanceof Element)) return
+
+    // The added node itself might be the email span.
+    if (node.matches("span[email]")) {
+      convertEmailSpan(node)
+    }
+
+    // Or it may contain email spans.
+    node
+      .querySelectorAll("span[email]")
+      .forEach(convertEmailSpan)
+  }
+
+  /**
+   * Add styling once globally instead of adding hover event
+   * listeners to every generated link.
+   */
+  const style = document.createElement("style")
+
+  style.textContent = `
+    .gmail-email-search-link {
+      color: #1a73e8 !important;
+      text-decoration: underline !important;
+      cursor: pointer !important;
+    }
+
+    .gmail-email-search-link:hover {
+      color: #1557b0 !important;
+    }
+  `
+
+  document.head.appendChild(style)
+
+  /**
+   * Initial scan.
+   *
+   * This is the ONE time we're intentionally scanning the
+   * entire document.
+   */
+  document
+    .querySelectorAll("span[email]")
+    .forEach(convertEmailSpan)
+
+  /**
+   * Gmail dynamically inserts messages and headers.
+   *
+   * Instead of:
+   *
+   *   mutation happens
+   *        ↓
+   *   scan entire document
+   *
+   * we now do:
+   *
+   *   mutation happens
+   *        ↓
+   *   inspect ONLY added nodes
+   */
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        processNode(node)
       }
-    })
-
-    if (shouldUpdate) {
-      setTimeout(makeEmailsClickable, 100) // Small delay to ensure DOM is ready
     }
   })
 
-  // Start observing
   observer.observe(document.body, {
     childList: true,
     subtree: true,
