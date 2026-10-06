@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Google Calendar - Drag & Drop ICS Import
 // @namespace    https://github.com/samlroberts/userscripts
-// @version      2.1
+// @version      2.2
 // @description  Drop an .ics file anywhere in Google Calendar to open it as a new event.
 // @author       You
 // @match        https://calendar.google.com/calendar/*
@@ -123,11 +123,15 @@
                     const text = event.target?.result;
 
                     if (typeof text !== 'string') {
-                        alert('Unable to read ICS file.');
+                        alert('Unable to read the .ics file.');
                         return;
                     }
 
                     parseAndRedirectICS(text);
+                };
+
+                reader.onerror = () => {
+                    alert('Unable to read the .ics file.');
                 };
 
                 reader.readAsText(file);
@@ -141,6 +145,13 @@
      * "Create Event" screen with the event information filled in.
      */
     function parseAndRedirectICS(icsText) {
+        if (!icsText.trim()) {
+            alert(
+                'The dropped .ics file is empty. Download or export it again.'
+            );
+            return;
+        }
+
         /*
          * ICS allows long lines to be "folded":
          *
